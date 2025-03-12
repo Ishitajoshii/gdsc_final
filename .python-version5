@@ -1,0 +1,145 @@
+#  Discord Bot with Chat, Poll, Reminder, and Music Commands
+# import libraries
+import discord
+import google.generativeai as genai
+import os
+import datetime
+import yt_dlp as youtube_dl
+from discord.ext import commands
+from dotenv import load_dotenv
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+#load env variables
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Configure Gemini API
+genai.configure(api_key="AIzaSyD_WBE_4STcy89hsD-hAkWckE9Sn7njuBA") #configures genai(python) w an API key #ideally use env variable
+model = genai.GenerativeModel("gemini-1.5-pro-latest")
+
+# Initialize bot with intents #intents=permissions 
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True  #needed to read message content
+
+bot = commands.Bot(command_prefix="!", intents=intents)#command recognised by bot only if command_prefix present
+scheduler = AsyncIOScheduler()
+voice_clients = {}  #dictionary to store active voice clients - format {active_voice_client: voice channel}
+
+# bot ready
+@bot.event#decorator- registers fxn as event handler
+async def on_ready():#asynchronous fxn runs when bot is ready as conveyed by decorator
+    print(f"✅ Logged in as {bot.user}")
+
+#chat(Gemini API)
+@bot.command()#This is a decorator that registers chat as a command for the bot.
+#!chat <message> in Discord => the bot will respond.
+async def chat(ctx, *, message):
+    try:
+        response = model.generate_content(message)
+        await ctx.send(response.text)#since sending messages is asynchronous, await ensures the bot doesn't freeze.
+    except Exception as e:
+        await ctx.send(f"⚠️ Error: {e}")
+
+#reminder command (not possible using gemini because no access to system clock)
+async def send_reminder(ctx, reminder):
+    await ctx.send(f"⏰ Reminder: {reminder}")
+
+@bot.command()
+async def remind(ctx, time: int, *, reminder: str):
+    await ctx.send(f"✅ Reminder set for {time} seconds: {reminder}")
+    run_time = datetime.datetime.now() + datetime.timedelta(seconds=time)
+    scheduler.add_job(send_reminder, 'date', run_date=run_time, args=[ctx, reminder])
+    
+    if not scheduler.running:
+        scheduler.start()
+
+#poll 
+@bot.command()
+async def poll(ctx, question: str, *options):
+    if len(options) < 2:
+        await ctx.send("⚠️ You need at least two options.")
+        return
+    if len(options) > 10:
+        await ctx.send("⚠️ Maximum 10 options allowed.")
+        return
+
+    reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    
+    poll_message = f"📊 **{question}**\n"
+    for i, option in enumerate(options):
+        poll_message += f"{reactions[i]} {option}\n"
+
+    message = await ctx.send(poll_message)
+    
+    for i in range(len(options)):
+        await message.add_reaction(reactions[i])
+
+#Music 
+
+# Music Queue
+music_queue = []
+
+def get_voice_client(ctx):
+    return discord.utils.get(bot.voice_clients, guild=ctx.guild)
+
+@bot.command()
+async def play(ctx, url: str):
+    if not ctx.author.voice:
+        await ctx.send("⚠️ Join a voice channel first!")
+        return
+    
+    voice_channel = ctx.author.voice.channel
+    vc = get_voice_client(ctx)
+
+    if not vc:
+        vc = await voice_channel.connect()
+
+    # Download YouTube audio URL
+    ydl_opts = {'format': 'bestaudio', 'noplaylist': 'True'}
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        url2 = ing
+    # Play the audio using FFmpeg
+    FFMPEG_OPTIONS = {
+        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+        'options': '-vn'
+    }
+    
+    vc.play(discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS), after=lambda e: print("🎵 Music finished."))
+    await ctx.send(f"🎶 Now playing: **{title}**")
+
+
+@bot.command()
+async def pause(ctx):
+    """Pauses the music."""
+    vc = get_voice_client(ctx)
+    if vc and vc.is_playing():
+        vc.pause()
+        await ctx.send("⏸ Music paused.")
+    else:
+        await ctx.send("⚠️ No music is playing!")
+
+
+@bot.command()
+async def resume(ctx):
+    """Resumes paused music."""
+    vc = get_voice_client(ctx)
+    if vc and vc.is_paused():
+        vc.resume()
+        await ctx.send("▶ Music resumed.")
+    else:
+        await ctx.send("⚠️ No music is paused!")
+
+
+@bot.command()
+async def stop(ctx):
+    """Stops the music and clears the queue."""
+    vc = get_voice_client(ctx)
+    if vc and vc.is_playing():
+        vc.stop()
+        await ctx.send("⏹ Music stopped.")
+    else:
+        await ctx.send("⚠️ No music is playing!")
+
+bot.run(TOKEN)
